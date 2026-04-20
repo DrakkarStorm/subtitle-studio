@@ -10,6 +10,15 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  # Force JavaScript actions to run on Node.js 24.
+  # Node.js 20 is deprecated on GitHub Actions runners (removed Sept 2026).
+  # Some third-party actions (e.g. astral-sh/setup-uv → actions/cache@v4)
+  # still declare Node 20 in their metadata — forcing Node 24 keeps them
+  # working after the default switch on June 2, 2026.
+  # See: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
 jobs:
   lint:
     name: Lint & format (pre-commit)
