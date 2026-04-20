@@ -1,0 +1,83 @@
+"""Tests for the CLI entry point (subtitle_studio.cli)."""
+
+from __future__ import annotations
+
+import logging
+
+from typer.testing import CliRunner
+
+from subtitle_studio import __version__
+from subtitle_studio.cli import _configure_logging, app
+
+runner = CliRunner()
+
+
+class TestVersionFlag:
+    def test_version_short(self) -> None:
+        result = runner.invoke(app, ["-V"])
+        assert result.exit_code == 0
+        assert __version__ in result.stdout
+
+    def test_version_long(self) -> None:
+        result = runner.invoke(app, ["--version"])
+        assert result.exit_code == 0
+        assert __version__ in result.stdout
+
+
+class TestHelp:
+    def test_help_lists_version_flag(self) -> None:
+        result = runner.invoke(app, ["--help"])
+        assert result.exit_code == 0
+        assert "--version" in result.stdout
+
+    def test_help_lists_verbose_and_quiet(self) -> None:
+        result = runner.invoke(app, ["--help"])
+        assert result.exit_code == 0
+        assert "--verbose" in result.stdout
+        assert "--quiet" in result.stdout
+
+
+class TestConfigureLogging:
+    def test_default_is_warning(self) -> None:
+        _configure_logging(verbose=0, quiet=False)
+        assert logging.getLogger().level == logging.WARNING
+
+    def test_verbose_is_info(self) -> None:
+        _configure_logging(verbose=1, quiet=False)
+        assert logging.getLogger().level == logging.INFO
+
+    def test_double_verbose_is_debug(self) -> None:
+        _configure_logging(verbose=2, quiet=False)
+        assert logging.getLogger().level == logging.DEBUG
+
+    def test_quiet_is_error(self) -> None:
+        _configure_logging(verbose=0, quiet=True)
+        assert logging.getLogger().level == logging.ERROR
+
+    def test_quiet_overrides_verbose(self) -> None:
+        _configure_logging(verbose=2, quiet=True)
+        assert logging.getLogger().level == logging.ERROR
+
+
+class TestMissingApiKey:
+    def test_exits_1_without_key(self, monkeypatch) -> None:
+        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+        result = runner.invoke(app, ["/tmp/nonexistent.mp4"])
+        assert result.exit_code == 1
+        assert "ANTHROPIC_API_KEY" in result.stderr
+
+
+class TestInvalidVideo:
+    def test_exits_1_on_missing_file(self, monkeypatch) -> None:
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
+        result = runner.invoke(app, ["/tmp/does_not_exist_123456.mp4"])
+        assert result.exit_code == 1
+        assert "not found" in result.stderr
+
+    def test_exits_1_on_bad_extension(self, monkeypatch, tmp_path) -> None:
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
+        bad = tmp_path / "video.xyz"
+        bad.write_bytes(b"")
+        result = runner.invoke(app, [str(bad)])
+        assert result.exit_code == 1
+        assert "extension" in result.stderr.lower()

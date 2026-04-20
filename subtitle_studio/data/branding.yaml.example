@@ -1,0 +1,29 @@
+# Personal branding template.
+#
+# Usage:
+#   1. Copy:    cp branding.yaml.example branding.yaml
+#   2. Edit the content with your own proper nouns and technical vocabulary
+#   3. Point the CLI at it:
+#        export BRANDING_YAML_PATH=./branding.yaml
+#        subtitle-studio video.mp4
+#
+# `/branding.yaml` is gitignored — safe to keep personal info in it.
+#
+# Schema (validated by subtitle_studio/detect/models.py::BrandingConfig):
+#
+#   noms_propres:           list[str]  # required — proper nouns never to be corrected
+#   vocabulaire_technique:  list[str]  # required — technical terms never to be flagged
+#
+# Both keys are required. Empty lists are accepted but both keys must be present.
+
+noms_propres:
+  - My Brand
+  - "@my_handle"
+
+vocabulaire_technique:
+  - Kubernetes
+  - Docker
+  - Terraform
+  - GitOps
+  - Python
+  - Go
