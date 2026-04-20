@@ -11,6 +11,11 @@ from subtitle_studio.cli import _configure_logging, app
 
 runner = CliRunner()
 
+# CI runners default to 80 columns — Rich wraps the --help panel so aggressively
+# that option flags can be split across lines or truncated. Force a wide terminal
+# and disable colors to keep assertions deterministic.
+_WIDE_ENV = {"COLUMNS": "200", "NO_COLOR": "1", "TERM": "dumb"}
+
 
 class TestVersionFlag:
     def test_version_short(self) -> None:
@@ -26,12 +31,12 @@ class TestVersionFlag:
 
 class TestHelp:
     def test_help_lists_version_flag(self) -> None:
-        result = runner.invoke(app, ["--help"])
+        result = runner.invoke(app, ["--help"], env=_WIDE_ENV)
         assert result.exit_code == 0
         assert "--version" in result.stdout
 
     def test_help_lists_verbose_and_quiet(self) -> None:
-        result = runner.invoke(app, ["--help"])
+        result = runner.invoke(app, ["--help"], env=_WIDE_ENV)
         assert result.exit_code == 0
         assert "--verbose" in result.stdout
         assert "--quiet" in result.stdout
