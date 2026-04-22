@@ -34,9 +34,16 @@ def wrap_text(text: str, max_chars: int = MAX_CHARS) -> str:
     return "\n".join(lines[:MAX_LINES])
 
 
-def to_srt(result: Any, max_chars: int = MAX_CHARS) -> str:
-    """Convert a stable-ts result to SRT string with YouTube-compliant line wrapping."""
-    subs = [
+def to_subtitles(result: Any, max_chars: int = MAX_CHARS) -> list[srt.Subtitle]:
+    """Convert a stable-ts result into a list of ``srt.Subtitle`` objects.
+
+    Exposes the intermediate list so callers can apply post-processing steps
+    (sentence merging, auto-fixes, etc.) before composing the final SRT.
+
+    Line wrapping is applied here so the returned subtitles already respect
+    the YouTube convention (``max_chars`` per line, ``MAX_LINES`` lines max).
+    """
+    return [
         srt.Subtitle(
             index=i,
             start=timedelta(seconds=seg.start),
@@ -45,7 +52,11 @@ def to_srt(result: Any, max_chars: int = MAX_CHARS) -> str:
         )
         for i, seg in enumerate(result.segments, start=1)
     ]
-    return cast(str, srt.compose(subs))
+
+
+def to_srt(result: Any, max_chars: int = MAX_CHARS) -> str:
+    """Convert a stable-ts result to SRT string with YouTube-compliant line wrapping."""
+    return cast(str, srt.compose(to_subtitles(result, max_chars)))
 
 
 def _vtt_time(seconds: float) -> str:
