@@ -479,7 +479,7 @@ class TestStepDetect:
                 "subtitle_studio.pipeline.auto_fix_cps_violations",
                 return_value=([], []),
             ) as mock_autofix,
-            patch("subtitle_studio.pipeline.check_guidelines", return_value=[]),
+            patch("subtitle_studio.pipeline.audit_guidelines", return_value=[]),
         ):
             _step_detect(
                 sample_srt_path,
@@ -490,6 +490,7 @@ class TestStepDetect:
                 "model",
                 50,
                 max_chars=32,
+                shorts=True,
             )
 
         assert mock_autofix.call_args.kwargs["max_chars"] == 32
@@ -512,9 +513,9 @@ class TestStepDetect:
                 "subtitle_studio.pipeline.auto_fix_cps_violations",
                 return_value=(list(srt.parse(sample_srt_path.read_text())), [cps_fix]),
             ),
-            patch("subtitle_studio.pipeline.check_guidelines", return_value=[cps_violation]),
+            patch("subtitle_studio.pipeline.audit_guidelines", return_value=[cps_violation]),
         ):
-            # Ne doit pas lever PipelineStepError
+            # Must not raise PipelineStepError
             result = _step_detect(
                 sample_srt_path,
                 tmp_path,
@@ -523,6 +524,7 @@ class TestStepDetect:
                 branding,
                 "model",
                 50,
+                shorts=True,
             )
 
         assert result == sample_srt_path  # no corrected.srt (downgrade only, no corrections)
@@ -554,7 +556,7 @@ class TestStepDetect:
                 "subtitle_studio.pipeline.auto_fix_cps_violations",
                 return_value=(split_subs, [cps_fix]),
             ),
-            patch("subtitle_studio.pipeline.check_guidelines", return_value=[]),
+            patch("subtitle_studio.pipeline.audit_guidelines", return_value=[]),
         ):
             result = _step_detect(
                 sample_srt_path,
@@ -564,6 +566,7 @@ class TestStepDetect:
                 branding,
                 "model",
                 50,
+                shorts=True,
             )
 
         corrected = tmp_path / "test_corrected.srt"
@@ -588,7 +591,7 @@ class TestStepDetect:
                 "subtitle_studio.pipeline.auto_fix_cps_violations",
                 return_value=(original_subs, [cps_fix]),
             ),
-            patch("subtitle_studio.pipeline.check_guidelines", return_value=[]),
+            patch("subtitle_studio.pipeline.audit_guidelines", return_value=[]),
         ):
             result = _step_detect(
                 sample_srt_path,
@@ -628,7 +631,7 @@ class TestStepDetectDurationMerge:
                 "subtitle_studio.pipeline.auto_fix_cps_violations",
                 return_value=([], []),
             ),
-            patch("subtitle_studio.pipeline.check_guidelines", return_value=[]),
+            patch("subtitle_studio.pipeline.audit_guidelines", return_value=[]),
         ):
             _step_detect(
                 sample_srt_path,
@@ -639,6 +642,7 @@ class TestStepDetectDurationMerge:
                 "model",
                 50,
                 max_chars=32,
+                shorts=True,
             )
 
         assert mock_merge.call_args.kwargs["max_chars"] == 32
@@ -665,7 +669,7 @@ class TestStepDetectDurationMerge:
                 "subtitle_studio.pipeline.auto_fix_cps_violations",
                 return_value=(original_subs, []),
             ),
-            patch("subtitle_studio.pipeline.check_guidelines", return_value=[]),
+            patch("subtitle_studio.pipeline.audit_guidelines", return_value=[]),
         ):
             result = _step_detect(
                 sample_srt_path,
@@ -675,6 +679,7 @@ class TestStepDetectDurationMerge:
                 branding,
                 "model",
                 50,
+                shorts=True,
             )
 
         corrected = tmp_path / "test_corrected.srt"
@@ -702,7 +707,7 @@ class TestStepDetectDurationMerge:
                 "subtitle_studio.pipeline.auto_fix_cps_violations",
                 return_value=(original_subs, []),
             ),
-            patch("subtitle_studio.pipeline.check_guidelines", return_value=[]),
+            patch("subtitle_studio.pipeline.audit_guidelines", return_value=[]),
         ):
             result = _step_detect(
                 sample_srt_path,
@@ -712,6 +717,7 @@ class TestStepDetectDurationMerge:
                 branding,
                 "model",
                 50,
+                shorts=True,
             )
 
         corrected = tmp_path / "test_corrected.srt"
@@ -740,7 +746,7 @@ class TestStepDetectDurationMerge:
                 "subtitle_studio.pipeline.auto_fix_cps_violations",
                 return_value=(original_subs, []),
             ),
-            patch("subtitle_studio.pipeline.check_guidelines", return_value=[]),
+            patch("subtitle_studio.pipeline.audit_guidelines", return_value=[]),
         ):
             _step_detect(
                 sample_srt_path,
@@ -750,9 +756,210 @@ class TestStepDetectDurationMerge:
                 branding,
                 "model",
                 50,
+                shorts=True,
             )
 
         report = tmp_path / "test_report.txt"
         assert report.exists()
         content = report.read_text(encoding="utf-8")
         assert "Duration auto-merge" in content
+
+
+# ---------------------------------------------------------------------------
+# Landscape mode behavior — shorts=False path
+# ---------------------------------------------------------------------------
+
+
+class TestStepDetectLandscape:
+    def test_landscape_skips_auto_fix_and_auto_merge(self, sample_srt_path: Path, tmp_path: Path) -> None:
+        """In landscape mode, auto_fix_cps_violations and auto_merge_short_segments must not run."""
+        from unittest.mock import MagicMock
+
+        client = MagicMock()
+        branding = MagicMock()
+
+        with (
+            patch("subtitle_studio.pipeline.detect_errors", return_value=[]),
+            patch("subtitle_studio.pipeline.auto_fix_cps_violations") as mock_autofix,
+            patch("subtitle_studio.pipeline.auto_merge_short_segments") as mock_merge,
+            patch("subtitle_studio.pipeline.audit_guidelines") as mock_audit,
+        ):
+            result = _step_detect(
+                sample_srt_path,
+                tmp_path,
+                client,
+                "",
+                branding,
+                "model",
+                50,
+                shorts=False,
+                check_guidelines=False,
+            )
+
+        mock_autofix.assert_not_called()
+        mock_merge.assert_not_called()
+        mock_audit.assert_not_called()
+        assert result == sample_srt_path
+        assert not (tmp_path / "test_report.txt").exists()
+        assert not (tmp_path / "test_corrected.srt").exists()
+
+    def test_landscape_with_corrections_writes_corrected_srt(self, sample_srt_path: Path, tmp_path: Path) -> None:
+        """Landscape + ASR corrections → writes corrected.srt and a report with only corrections."""
+        from unittest.mock import MagicMock
+
+        from subtitle_studio.detect.models import Correction
+
+        client = MagicMock()
+        branding = MagicMock()
+        correction = Correction(segment=1, original="Bonjour", suggestion="Bonjour,", raison="ponctuation")
+
+        with (
+            patch("subtitle_studio.pipeline.detect_errors", return_value=[correction]),
+        ):
+            result = _step_detect(
+                sample_srt_path,
+                tmp_path,
+                client,
+                "",
+                branding,
+                "model",
+                50,
+                shorts=False,
+                check_guidelines=False,
+            )
+
+        corrected = tmp_path / "test_corrected.srt"
+        report = tmp_path / "test_report.txt"
+        assert result == corrected
+        assert corrected.exists()
+        assert report.exists()
+        report_text = report.read_text()
+        assert "Correction report" in report_text
+        assert "YouTube compliance" not in report_text  # no guideline section
+
+    def test_run_pipeline_forwards_check_guidelines_to_step_detect(
+        self, fake_video: Path, sample_srt_path: Path, tmp_path: Path
+    ) -> None:
+        """run_pipeline(check_guidelines=True) must pass the flag down to _step_detect."""
+        translated = tmp_path / "test.en.srt"
+        translated.write_text("", encoding="utf-8")
+        out_dir = tmp_path / "output"
+        out_dir.mkdir()
+
+        with (
+            patch("subtitle_studio.pipeline._step_generate", return_value=sample_srt_path),
+            patch("subtitle_studio.pipeline._step_detect", return_value=sample_srt_path) as mock_detect,
+            patch("subtitle_studio.pipeline._step_translate", return_value=translated),
+            patch("subtitle_studio.pipeline.anthropic.Anthropic"),
+            patch("subtitle_studio.pipeline.load_branding"),
+            patch("subtitle_studio.pipeline.gc.collect"),
+        ):
+            run_pipeline(fake_video, output_dir=out_dir, check_guidelines=True)
+
+        assert mock_detect.call_args.kwargs["check_guidelines"] is True
+        assert mock_detect.call_args.kwargs["shorts"] is False
+
+    def test_run_pipeline_forwards_shorts_to_step_generate(
+        self, fake_video: Path, sample_srt_path: Path, tmp_path: Path
+    ) -> None:
+        """run_pipeline(shorts=True) must pass shorts=True to _step_generate
+        (so the merger is skipped upstream of detection)."""
+        translated = tmp_path / "test.en.srt"
+        translated.write_text("", encoding="utf-8")
+        out_dir = tmp_path / "output"
+        out_dir.mkdir()
+
+        with (
+            patch("subtitle_studio.pipeline._step_generate", return_value=sample_srt_path) as mock_gen,
+            patch("subtitle_studio.pipeline._step_detect", return_value=sample_srt_path),
+            patch("subtitle_studio.pipeline._step_translate", return_value=translated),
+            patch("subtitle_studio.pipeline.anthropic.Anthropic"),
+            patch("subtitle_studio.pipeline.load_branding"),
+            patch("subtitle_studio.pipeline.gc.collect"),
+        ):
+            run_pipeline(fake_video, output_dir=out_dir, shorts=True)
+
+        assert mock_gen.call_args.kwargs["shorts"] is True
+
+    def test_step_generate_skips_merger_when_shorts_true(self, fake_video: Path, tmp_path: Path) -> None:
+        """_step_generate(shorts=True) must not call merge_into_sentences."""
+        from unittest.mock import MagicMock
+
+        from subtitle_studio.pipeline import _step_generate
+
+        out_dir = tmp_path / "output"
+        out_dir.mkdir()
+
+        fake_segment = MagicMock(start=0.0, end=2.0, text="hello world")
+        fake_result = MagicMock(segments=[fake_segment])
+
+        with (
+            patch("subtitle_studio.pipeline.extract_audio", return_value=tmp_path / "audio.mp3"),
+            patch("subtitle_studio.pipeline.transcribe", return_value=fake_result),
+            patch("subtitle_studio.pipeline.merge_into_sentences") as mock_merge,
+        ):
+            (tmp_path / "audio.mp3").write_bytes(b"")
+            _step_generate(fake_video, out_dir, backend="local", shorts=True)
+
+        mock_merge.assert_not_called()
+
+    def test_step_generate_calls_merger_when_shorts_false(self, fake_video: Path, tmp_path: Path) -> None:
+        """_step_generate(shorts=False) must call merge_into_sentences."""
+        from unittest.mock import MagicMock
+
+        from subtitle_studio.pipeline import _step_generate
+
+        out_dir = tmp_path / "output"
+        out_dir.mkdir()
+
+        fake_segment = MagicMock(start=0.0, end=2.0, text="hello world")
+        fake_result = MagicMock(segments=[fake_segment])
+
+        with (
+            patch("subtitle_studio.pipeline.extract_audio", return_value=tmp_path / "audio.mp3"),
+            patch("subtitle_studio.pipeline.transcribe", return_value=fake_result),
+            patch(
+                "subtitle_studio.pipeline.merge_into_sentences",
+                side_effect=lambda subs: subs,
+            ) as mock_merge,
+        ):
+            (tmp_path / "audio.mp3").write_bytes(b"")
+            _step_generate(fake_video, out_dir, backend="local", shorts=False)
+
+        mock_merge.assert_called_once()
+
+    def test_landscape_with_check_guidelines_runs_audit_only(self, sample_srt_path: Path, tmp_path: Path) -> None:
+        """Landscape + check_guidelines=True → audit runs, no auto-fix, no blocking on errors."""
+        from unittest.mock import MagicMock
+
+        from subtitle_studio.detect.models import GuidelineViolation
+
+        client = MagicMock()
+        branding = MagicMock()
+        violation = GuidelineViolation(segment=1, rule="cps", severity="error", description="too fast")
+
+        with (
+            patch("subtitle_studio.pipeline.detect_errors", return_value=[]),
+            patch("subtitle_studio.pipeline.auto_fix_cps_violations") as mock_autofix,
+            patch("subtitle_studio.pipeline.auto_merge_short_segments") as mock_merge,
+            patch("subtitle_studio.pipeline.audit_guidelines", return_value=[violation]),
+        ):
+            # Even with a severity=error violation, landscape must not raise.
+            result = _step_detect(
+                sample_srt_path,
+                tmp_path,
+                client,
+                "",
+                branding,
+                "model",
+                50,
+                shorts=False,
+                check_guidelines=True,
+            )
+
+        mock_autofix.assert_not_called()
+        mock_merge.assert_not_called()
+        assert result == sample_srt_path
+        report = tmp_path / "test_report.txt"
+        assert report.exists()
+        assert "YouTube compliance" in report.read_text()

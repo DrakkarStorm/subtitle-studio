@@ -154,6 +154,15 @@ def pipeline(
         "-q",
         help="Errors only (takes precedence over --verbose)",
     ),
+    check_guidelines: bool = typer.Option(
+        False,
+        "--check-guidelines",
+        help=(
+            "Audit YouTube guidelines (CPS/CPL/duration/gap) in landscape mode. "
+            "Read-only: emits warnings in the report, never auto-fixes or blocks. "
+            "No-op with --short (Shorts mode always audits)."
+        ),
+    ),
     _version: bool | None = typer.Option(
         None,
         "--version",
@@ -196,6 +205,22 @@ def pipeline(
 
     resolved_model = model or _DEFAULT_MODEL
 
+    # Warn if CPS/CPL/duration flags were passed without --short or --check-guidelines,
+    # because they are silently ignored in landscape mode.
+    threshold_flags = {
+        "--max-cps": max_cps,
+        "--warn-cps": warn_cps,
+        "--max-cpl": max_cpl,
+        "--warn-cpl": warn_cpl,
+        "--min-gap": min_gap,
+    }
+    active_thresholds = [name for name, value in threshold_flags.items() if value is not None]
+    if active_thresholds and not short and not check_guidelines:
+        err_console.print(
+            f"[yellow]Warning:[/yellow] {', '.join(active_thresholds)} "
+            "are ignored in landscape mode. Pass --short or --check-guidelines to enable the audit."
+        )
+
     try:
         with Progress(
             SpinnerColumn(),
@@ -235,6 +260,7 @@ def pipeline(
                 max_cpl=max_cpl,
                 warn_cpl=warn_cpl,
                 min_gap=min_gap,
+                check_guidelines=check_guidelines,
                 step_ctx=step_ctx,
             )
 

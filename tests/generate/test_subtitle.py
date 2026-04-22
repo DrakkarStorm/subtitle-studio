@@ -2,7 +2,9 @@
 
 from types import SimpleNamespace
 
-from subtitle_studio.generate.subtitle import _vtt_time, to_srt, to_vtt, wrap_text
+import srt as srt_lib
+
+from subtitle_studio.generate.subtitle import _vtt_time, to_srt, to_subtitles, to_vtt, wrap_text
 
 # ---------------------------------------------------------------------------
 # wrap_text
@@ -138,6 +140,42 @@ class TestToSrt:
         result = _make_result((0.0, 2.0, text_35))
         srt_text = to_srt(result)  # default
         assert text_35 in srt_text  # not wrapped
+
+
+# ---------------------------------------------------------------------------
+# to_subtitles
+# ---------------------------------------------------------------------------
+
+
+class TestToSubtitles:
+    def test_returns_list_matching_segment_count(self) -> None:
+        result = _make_result(
+            (0.0, 2.0, "Un"),
+            (2.0, 4.0, "deux"),
+            (4.0, 6.0, "trois"),
+        )
+        subs = to_subtitles(result)
+        assert len(subs) == 3
+        assert all(isinstance(s, srt_lib.Subtitle) for s in subs)
+
+    def test_empty_segments_returns_empty_list(self) -> None:
+        result = _make_result()
+        assert to_subtitles(result) == []
+
+    def test_wraps_content_per_max_chars(self) -> None:
+        # Use separated words so textwrap can break between them
+        # (wrap_text uses break_long_words=False by design).
+        long_text = "word " * 12  # 60 chars, splittable
+        result = _make_result((0.0, 2.0, long_text))
+        subs = to_subtitles(result, max_chars=32)
+        assert len(subs) == 1
+        for line in subs[0].content.splitlines():
+            assert len(line) <= 32
+
+    def test_to_srt_equals_compose_of_to_subtitles(self) -> None:
+        """Regression: to_srt must stay byte-equivalent to compose(to_subtitles)."""
+        result = _make_result((0.0, 2.0, "Bonjour."), (3.0, 5.0, "Comment ça va ?"))
+        assert to_srt(result) == srt_lib.compose(to_subtitles(result))
 
 
 # ---------------------------------------------------------------------------

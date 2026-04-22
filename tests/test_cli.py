@@ -41,6 +41,52 @@ class TestHelp:
         assert "--verbose" in result.stdout
         assert "--quiet" in result.stdout
 
+    def test_help_lists_check_guidelines(self) -> None:
+        result = runner.invoke(app, ["--help"], env=_WIDE_ENV)
+        assert result.exit_code == 0
+        assert "--check-guidelines" in result.stdout
+
+
+class TestNoOpThresholdWarning:
+    def test_warns_when_max_cps_passed_in_landscape(self, monkeypatch, tmp_path) -> None:
+        """--max-cps without --short or --check-guidelines triggers a stderr warning."""
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
+        video = tmp_path / "video.mp4"
+        video.write_bytes(b"")
+
+        # The pipeline will fail (fake video), but the warning fires before that.
+        result = runner.invoke(app, [str(video), "--max-cps", "25"])
+        # Warning emitted to stderr regardless of exit code.
+        assert "--max-cps" in result.stderr
+        assert "ignored in landscape mode" in result.stderr
+
+    def test_no_warning_when_max_cps_with_short(self, monkeypatch, tmp_path) -> None:
+        """--max-cps with --short: no no-op warning."""
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
+        video = tmp_path / "video.mp4"
+        video.write_bytes(b"")
+
+        result = runner.invoke(app, [str(video), "--short", "--max-cps", "25"])
+        assert "ignored in landscape mode" not in result.stderr
+
+    def test_no_warning_when_max_cps_with_check_guidelines(self, monkeypatch, tmp_path) -> None:
+        """--max-cps with --check-guidelines: no no-op warning."""
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
+        video = tmp_path / "video.mp4"
+        video.write_bytes(b"")
+
+        result = runner.invoke(app, [str(video), "--check-guidelines", "--max-cps", "25"])
+        assert "ignored in landscape mode" not in result.stderr
+
+    def test_no_warning_when_no_threshold_flags(self, monkeypatch, tmp_path) -> None:
+        """Landscape without threshold flags: no warning."""
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
+        video = tmp_path / "video.mp4"
+        video.write_bytes(b"")
+
+        result = runner.invoke(app, [str(video)])
+        assert "ignored in landscape mode" not in result.stderr
+
 
 class TestConfigureLogging:
     def test_default_is_warning(self) -> None:

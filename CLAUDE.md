@@ -61,9 +61,14 @@ subtitle_studio/
 │   └── subtitle.py     # to_srt(), to_vtt(), wrap_text() (42 chars, 2 lines max)
 ├── detect/
 │   ├── models.py       # Pydantic: Correction, GuidelineViolation, BrandingConfig + exceptions
-│   ├── guidelines.py   # Deterministic YouTube checks (CPS, CPL, duration, gap)
+│   ├── guidelines.py   # Deterministic YouTube checks (CPS, CPL, duration, gap) — imported as `audit_guidelines` in pipeline.py to avoid shadowing the `check_guidelines` kwarg
 │   ├── detector.py     # Claude API batching (50 segments/batch), prompt construction
+│   ├── cps_autofix.py  # auto_fix_cps_violations() — Shorts mode only (split/downgrade)
+│   ├── duration_autofix.py # auto_merge_short_segments() — Shorts mode only
 │   └── srt_parser.py   # parse_srt() multi-encoding, write_srt() atomic, apply_corrections()
+├── generate/
+│   ├── sentence_merger.py # merge_into_sentences() — phrase-level fusion (YouTube-like landscape)
+│   └── ...
 └── translate/
     └── translate.py    # translate_cues(), run_translation() — Claude API [N] format
 ```
@@ -71,20 +76,30 @@ subtitle_studio/
 ### Data flow in pipeline.py
 
 ```
-run_pipeline()
+run_pipeline(shorts=False, check_guidelines=False)
   ├── _step_generate() → <stem>.srt
-  │   ├── extract_audio()      # ffmpeg → tempfile
-  │   └── transcribe()         # stable_whisper (local) or transcribe_api (cloud)
+  │   ├── extract_audio()         # ffmpeg → tempfile
+  │   ├── transcribe()            # stable_whisper (local) or transcribe_api (cloud)
+  │   ├── to_subtitles()          # Whisper result → list[srt.Subtitle] with wrap_text
+  │   └── merge_into_sentences()  # landscape mode only — YouTube-like ~5s / 84 chars segments
   │
-  ├── gc.collect()             # ⚠️ INTENTIONAL — frees the WhisperModel (~3 GB) before API calls
+  ├── gc.collect()                # ⚠️ INTENTIONAL — frees the WhisperModel (~3 GB) before API calls
   │
-  ├── _step_detect() → <stem>_corrected.srt (if corrections) or <stem>.srt
-  │   ├── check_guidelines()   # deterministic rules
-  │   ├── detect_errors()      # Claude API per batch
-  │   └── _write_report()      # only if violations or corrections
+  ├── _step_detect() → <stem>_corrected.srt (if modifications) or <stem>.srt
+  │   ├── detect_errors()         # Claude API per batch — always runs
+  │   ├── apply_corrections()     # always runs
+  │   │
+  │   ├── if shorts:              # Shorts mode — strict broadcast norms
+  │   │     auto_merge_short_segments()
+  │   │     auto_fix_cps_violations()
+  │   │
+  │   ├── if shorts or check_guidelines:
+  │   │     audit_guidelines()    # read-only in landscape; enforced in Shorts (blocking errors)
+  │   │
+  │   └── _write_report()         # only if corrections/violations/fixes present
   │
-  └── _step_translate() → <stem>.en.srt (or <stem>_corrected.en.srt)
-      └── run_translation()    # Claude API [N] format
+  └── _step_translate() → <stem>.<lang>.srt (or <stem>_corrected.<lang>.srt)
+      └── run_translation()       # Claude API [N] format
 ```
 
 **Do not remove `gc.collect()` after `_step_generate()`.** This call is
@@ -105,9 +120,22 @@ absence of the report and the corrected SRT is a **success** state, not an error
 
 ### Blocking error handling (R5)
 
-If the verification stage detects `severity="error"` violations, the pipeline
-stops before translation and raises `PipelineStepError`. `severity="warning"`
-violations let the pipeline continue with a visible warning.
+Blocking errors apply **only in Shorts mode** (`shorts=True`). If the
+verification stage detects `severity="error"` violations, the pipeline stops
+before translation and raises `PipelineStepError`. Landscape mode never
+blocks, even with `check_guidelines=True` — the audit is read-only and emits
+warnings in the report.
+
+### Landscape vs Shorts mode
+
+| Aspect | Landscape (default) | Shorts (`--short`) |
+|---|---|---|
+| Segmentation | Sentence-level merge in `_step_generate` (~5 s / 84 chars, sentence-boundary preferred) | Raw Whisper segments |
+| `auto_merge_short_segments` | skipped | applied |
+| `auto_fix_cps_violations` | skipped | applied |
+| `audit_guidelines` | skipped unless `check_guidelines=True` | applied |
+| Blocking errors | never | on severity="error" |
+| Report file | only if ≥ 1 ASR correction or (with `check_guidelines=True`) ≥ 1 violation | whenever violations/corrections/fixes exist |
 
 ## Language conventions
 

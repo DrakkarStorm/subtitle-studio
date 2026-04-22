@@ -24,12 +24,13 @@ from .detect.guidelines import (
     DEFAULT_WARN_CPS,
     SHORTS_MAX_CPL,
     SHORTS_WARN_CPL,
-    check_guidelines,
 )
+from .detect.guidelines import check_guidelines as audit_guidelines
 from .detect.models import BrandingConfig, ClaudeAPIError, Correction, CpsAutoFix, DurationAutoFix, GuidelineViolation
 from .detect.srt_parser import apply_corrections, parse_srt, write_srt
 from .generate.audio import extract_audio
-from .generate.subtitle import MAX_CHARS, to_srt
+from .generate.sentence_merger import merge_into_sentences
+from .generate.subtitle import MAX_CHARS, to_subtitles
 from .generate.transcribe import transcribe
 from .models import PipelineConfigError, PipelineStepError
 from .translate.translate import SUPPORTED_LANGS as TRANSLATE_SUPPORTED_LANGS
@@ -58,6 +59,7 @@ def run_pipeline(
     max_cpl: int | None = None,
     warn_cpl: int | None = None,
     min_gap: int | None = None,
+    check_guidelines: bool = False,
     step_ctx: Callable[[str], AbstractContextManager[None]] | None = None,
 ) -> Path:
     """Orchestrate the 3 stages. Returns the output directory.
@@ -66,6 +68,14 @@ def run_pipeline(
         model: Claude model for both detection and translation. For stage-level
             overrides, call ``_step_detect`` and ``_step_translate`` directly
             with a custom ``model`` argument.
+        shorts: ``True`` enables strict Shorts formatting — YouTube guideline
+            enforcement (CPS/CPL/duration/gap), auto-fix, auto-merge, blocking
+            errors. ``False`` (default) produces YouTube-like long segments via
+            sentence merging and skips all guideline enforcement.
+        check_guidelines: Opt-in read-only guideline audit in landscape mode.
+            No-op when ``shorts=True`` (shorts always audits). When enabled in
+            landscape, emits violations in the report without auto-fixing or
+            blocking.
         step_ctx: Context manager factory invoked with the stage name
             (`"Extraction"`, `"Verification"`, `"Translation"`). Lets the
             caller (the CLI) display a per-stage progress bar.
@@ -120,7 +130,7 @@ def run_pipeline(
 
     # Stage 1 — Extraction
     with _ctx("Extraction"):
-        srt_path = _step_generate(video_path, out, backend, max_chars=max_chars)
+        srt_path = _step_generate(video_path, out, backend, max_chars=max_chars, shorts=shorts)
 
     # Free the Whisper model (~3 GB) before the API calls
     gc.collect()
@@ -141,6 +151,8 @@ def run_pipeline(
             max_cps=eff_max_cps,
             warn_cps=eff_warn_cps,
             min_gap_ms=eff_min_gap,
+            shorts=shorts,
+            check_guidelines=check_guidelines,
         )
 
     # Stage 3 — Translation
@@ -157,18 +169,29 @@ def run_pipeline(
     return out
 
 
-def _step_generate(video_path: Path, out: Path, backend: str, max_chars: int = MAX_CHARS) -> Path:
+def _step_generate(
+    video_path: Path,
+    out: Path,
+    backend: str,
+    max_chars: int = MAX_CHARS,
+    shorts: bool = False,
+) -> Path:
     audio_path: Path | None = None
     try:
         audio_path = extract_audio(video_path)
         result = transcribe(audio_path, backend=backend)
-        srt_content = to_srt(result, max_chars)
-        srt_path = out / (video_path.stem + ".srt")
-        srt_path.write_text(srt_content, encoding="utf-8")
-
-        subtitles = parse_srt(srt_path)
+        subtitles = to_subtitles(result, max_chars)
         if not subtitles:
             raise PipelineStepError("Extraction", "No subtitles detected — silent video?")
+
+        # Landscape mode produces YouTube-like long phrase-based segments.
+        # Shorts mode keeps the raw Whisper segmentation so the downstream
+        # auto-fix/auto-merge stages can apply strict broadcast norms.
+        if not shorts:
+            subtitles = merge_into_sentences(subtitles)
+
+        srt_path = out / (video_path.stem + ".srt")
+        write_srt(subtitles, srt_path)
 
         return srt_path
     except PipelineStepError:
@@ -194,11 +217,13 @@ def _step_detect(
     max_cps: float = DEFAULT_MAX_CPS,
     warn_cps: float = DEFAULT_WARN_CPS,
     min_gap_ms: int = DEFAULT_MIN_GAP_MS,
+    shorts: bool = False,
+    check_guidelines: bool = False,
 ) -> Path:
     try:
         subtitles = parse_srt(srt_path)
 
-        # 1. ASR corrections (Claude)
+        # 1. ASR corrections (Claude) — always runs
         corrections = detect_errors(
             subtitles,
             context,
@@ -209,39 +234,44 @@ def _step_detect(
         )
         working_subs = apply_corrections(subtitles, corrections) if corrections else subtitles
 
-        # 2. Auto-merge of too-short segments (< DEFAULT_MIN_DURATION_ERROR_S)
-        working_subs, duration_fixes = auto_merge_short_segments(working_subs, max_chars=max_chars)
+        # Auto-fixes (duration merge + CPS split) only apply in Shorts mode.
+        # Landscape mode keeps the sentence-merged segmentation as-is.
+        duration_fixes: list[DurationAutoFix] = []
+        cps_fixes: list[CpsAutoFix] = []
+        if shorts:
+            working_subs, duration_fixes = auto_merge_short_segments(working_subs, max_chars=max_chars)
+            working_subs, cps_fixes = auto_fix_cps_violations(working_subs, max_cps=max_cps, max_chars=max_chars)
 
-        # 3. CPS auto-fix
-        working_subs, cps_fixes = auto_fix_cps_violations(working_subs, max_cps=max_cps, max_chars=max_chars)
+        # Guideline audit: Shorts enforces; landscape opts in via check_guidelines.
+        violations: list[GuidelineViolation] = []
+        if shorts or check_guidelines:
+            violations = audit_guidelines(
+                working_subs,
+                max_cps=max_cps,
+                warn_cps=warn_cps,
+                max_cpl=max_cpl,
+                warn_cpl=warn_cpl,
+                min_gap_ms=min_gap_ms,
+            )
+            if shorts:
+                # Downgrade CPS violations on irreducible segments: error → warning
+                downgraded = {f.segment for f in cps_fixes if f.action == "downgrade"}
+                violations = _apply_downgrades(violations, downgraded)
 
-        # 4. Guideline checks on the post-correction SRT
-        violations = check_guidelines(
-            working_subs,
-            max_cps=max_cps,
-            warn_cps=warn_cps,
-            max_cpl=max_cpl,
-            warn_cpl=warn_cpl,
-            min_gap_ms=min_gap_ms,
-        )
-
-        # 5. Downgrade CPS violations on irreducible segments: error → warning
-        downgraded = {f.segment for f in cps_fixes if f.action == "downgrade"}
-        violations = _apply_downgrades(violations, downgraded)
-
-        # 6. Report
+        # Report (skipped when there is nothing to report)
         _write_report(violations, corrections, duration_fixes, cps_fixes, subtitles, working_subs, out, srt_path.stem)
 
-        # 7. R5 — blocking errors
-        blocking = [v for v in violations if v.severity == "error"]
-        if blocking:
-            raise PipelineStepError(
-                "Verification",
-                f"{len(blocking)} blocking error(s) detected.\n"
-                + "\n".join(f"  • {v.rule} (segment {v.segment})" for v in blocking),
-            )
+        # R5 — blocking errors only apply in Shorts mode.
+        if shorts:
+            blocking = [v for v in violations if v.severity == "error"]
+            if blocking:
+                raise PipelineStepError(
+                    "Verification",
+                    f"{len(blocking)} blocking error(s) detected.\n"
+                    + "\n".join(f"  • {v.rule} (segment {v.segment})" for v in blocking),
+                )
 
-        # 8. Write the corrected SRT if any modifications exist
+        # Write the corrected SRT if any modification was applied
         has_splits = any(f.action == "split" for f in cps_fixes)
         if corrections or has_splits or duration_fixes:
             srt_corrected = out / (srt_path.stem + "_corrected.srt")

@@ -86,17 +86,18 @@ subtitle-studio video.mp4
 | Option | Default | Description |
 |---|---|---|
 | `video` | — | Video file (`.mp4`, `.mkv`, `.mov`, `.avi`) |
-| `--contexte`, `-c` | `""` | Video topic (e.g. `"Kubernetes tutorial"`) — improves detection |
+| `--context`, `-c` | `""` | Video topic (e.g. `"Kubernetes tutorial"`) — improves detection |
 | `--backend`, `-b` | `local` | Whisper backend: `local` (GPU/CPU) or `api` (cloud) |
 | `--output`, `-o` | `<stem>_YYYYMMDD_HHMMSS/` | Output directory |
 | `--model`, `-m` | `claude-haiku-4-5-20251001` | Claude model used for both detection and translation (also `ANTHROPIC_MODEL`) |
-| `--short`, `-s` | `false` | YouTube Shorts format (9:16 vertical) — lines ≤32 chars, adapted CPL thresholds |
+| `--short`, `-s` | `false` | YouTube Shorts format (9:16 vertical) — strict CPS/CPL/duration enforcement, auto-fix, blocking errors on violations |
 | `--target-lang`, `-l` | `en` | Target translation language: `en`, `es`, `de`, `pt` |
-| `--max-cps` | `21.0` | CPS threshold (chars/s) for blocking errors |
-| `--warn-cps` | `18.0` | CPS threshold (chars/s) for warnings |
-| `--max-cpl` | `42` | CPL threshold (chars/line) for errors (verification only — does not change wrapping) |
-| `--warn-cpl` | `40` | CPL threshold (chars/line) for warnings |
-| `--min-gap` | `80` | Minimum gap between subtitles (ms) |
+| `--check-guidelines` | `false` | Audit YouTube guidelines (CPS/CPL/duration/gap) in landscape mode. Read-only — emits warnings, never auto-fixes or blocks. No-op with `--short`. |
+| `--max-cps` | `21.0` | CPS threshold (chars/s) — only applied with `--short` or `--check-guidelines` |
+| `--warn-cps` | `18.0` | CPS warning threshold — only applied with `--short` or `--check-guidelines` |
+| `--max-cpl` | `42` | CPL threshold (chars/line) — only applied with `--short` or `--check-guidelines` |
+| `--warn-cpl` | `40` | CPL warning threshold — only applied with `--short` or `--check-guidelines` |
+| `--min-gap` | `80` | Minimum gap between subtitles (ms) — only applied with `--short` or `--check-guidelines` |
 | `--verbose`, `-v` | — | Increase log verbosity (`-v` = INFO, `-vv` = DEBUG) |
 | `--quiet`, `-q` | — | Errors only (takes precedence over `--verbose`) |
 | `--version`, `-V` | — | Print the version and exit |
@@ -108,7 +109,7 @@ subtitle-studio video.mp4
 subtitle-studio video.mp4
 
 # With topic context (recommended for technical vocabulary)
-subtitle-studio video.mp4 --contexte "Kubernetes tutorial"
+subtitle-studio video.mp4 --context "Kubernetes tutorial"
 
 # Custom output directory
 subtitle-studio video.mp4 --output /tmp/my_video/
@@ -133,9 +134,17 @@ subtitle-studio video.mp4 --max-cps 25 --warn-cps 22 --min-gap 100
 
 The pipeline chains 3 stages:
 
-1. **Extraction** — ffmpeg extracts audio, Whisper transcribes to a French SRT
-2. **Verification** — YouTube guideline checks (CPS, CPL, duration) + ASR error corrections by Claude
-3. **Translation** — Claude translates the corrected subtitles to the target language (`--target-lang`: `en`, `es`, `de` or `pt`)
+1. **Extraction** — ffmpeg extracts audio, Whisper transcribes, and (in landscape mode) segments are merged into YouTube-like phrases (~5 s / ~80 chars, preferring sentence boundaries).
+2. **Verification** — ASR corrections by Claude. In `--short` mode, strict CPS/CPL/duration/gap enforcement runs with auto-fix and blocking errors. In landscape mode, no enforcement unless `--check-guidelines` is passed (read-only audit).
+3. **Translation** — Claude translates the corrected subtitles to the target language (`--target-lang`: `en`, `es`, `de` or `pt`).
+
+### Modes
+
+| Mode | Triggered by | Segmentation | Guideline checks |
+|---|---|---|---|
+| **Landscape (default)** | (no flag) | Sentence-level merge — long segments ~5 s, capped at 2 lines × 42 chars | None, unless `--check-guidelines` |
+| **Shorts** | `--short` | Raw Whisper segments, auto-merged and auto-split to respect CPS ≤ 21 / duration ≥ 0.5 s | Strict — auto-fix, report, blocking errors on severity="error" |
+| **Landscape + audit** | `--check-guidelines` | Same as landscape | Read-only audit — report with warnings, no auto-fix, no blocking |
 
 ### Produced files
 
@@ -143,34 +152,34 @@ Artifacts are created under `<stem>_YYYYMMDD_HHMMSS/` in the current working dir
 
 | File | Generated when |
 |---|---|
-| `<stem>.srt` | Always |
-| `<stem>_corrected.srt` | Only if ASR corrections were detected |
-| `<stem>_report.txt` | Only if violations or corrections exist |
-| `<stem>.en.srt` or `<stem>_corrected.en.srt` | Always, if translation succeeds |
+| `<stem>.srt` | Always (sentence-merged in landscape, raw Whisper in `--short`) |
+| `<stem>_corrected.srt` | ASR corrections, auto-splits or auto-merges were applied |
+| `<stem>_report.txt` | ≥ 1 correction or ≥ 1 violation to report |
+| `<stem>.<lang>.srt` or `<stem>_corrected.<lang>.srt` | Translation succeeded |
 
-**Clean pipeline (no errors):**
+**Clean landscape pipeline:**
 ```
-video_20260329_150309/
+video_20260421_150309/
 ├── video.srt
 └── video.en.srt
 ```
 
-**Pipeline with corrections:**
+**Landscape with ASR corrections:**
 ```
-video_20260329_150309/
+video_20260421_150309/
 ├── video.srt
 ├── video_corrected.srt
 ├── video_report.txt
 └── video_corrected.en.srt
 ```
 
-**Blocked pipeline (blocking errors at stage 2):**
+**Shorts mode blocked by CPS error:**
 ```
-video_20260329_150309/
+video_20260421_150309/
 ├── video.srt
 └── video_report.txt
 ```
-Translation is not performed if blocking errors (`severity="error"`) are detected.
+Translation is skipped in `--short` mode when blocking errors (`severity="error"`) are detected. Landscape mode never blocks.
 
 ## Customizing branding (`branding.yaml`)
 
