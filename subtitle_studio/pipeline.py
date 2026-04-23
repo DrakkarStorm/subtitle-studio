@@ -232,7 +232,7 @@ def _step_detect(
             batch_size=batch_size,
             model=model,
         )
-        working_subs = apply_corrections(subtitles, corrections) if corrections else subtitles
+        working_subs = apply_corrections(subtitles, corrections, max_chars=max_chars) if corrections else subtitles
 
         # Auto-fixes (duration merge + CPS split) only apply in Shorts mode.
         # Landscape mode keeps the sentence-merged segmentation as-is.
