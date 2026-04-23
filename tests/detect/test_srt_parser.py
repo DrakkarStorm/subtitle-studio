@@ -92,3 +92,37 @@ class TestApplyCorrections:
         result = apply_corrections(sample_subtitles, corrections)
         assert result[0].content == "allé"
         assert result[2].content == "s'est passé"
+
+    def test_long_suggestion_is_wrapped(self, sample_subtitles: list[srt.Subtitle]) -> None:
+        """Claude returns a single-line suggestion. apply_corrections must re-wrap
+        it so the corrected segment respects the 42-char / 2-line YouTube convention.
+
+        Regression: merged landscape segments (~80 chars) corrected by Claude
+        previously landed as one 85-char line in the corrected SRT.
+        """
+        long_suggestion = "la documentation officielle de Google et Coursera pour les questions"
+        corrections = [
+            Correction(
+                segment=1,
+                original="la documentation officielle de Google et Cloud pour les questions",
+                suggestion=long_suggestion,
+                raison="contexte",
+            ),
+        ]
+        result = apply_corrections(sample_subtitles, corrections)
+        for line in result[0].content.splitlines():
+            assert len(line) <= 42, f"Line too long: {line!r}"
+        # Content still covers the original intent
+        flat = result[0].content.replace("\n", " ")
+        assert "Coursera" in flat
+        assert "questions" in flat
+
+    def test_respects_custom_max_chars(self, sample_subtitles: list[srt.Subtitle]) -> None:
+        """Caller can tighten the wrap width — useful for Shorts mode (max_chars=32)."""
+        suggestion = "voici une suggestion assez longue pour wrapper sur plusieurs lignes"
+        corrections = [
+            Correction(segment=1, original="...", suggestion=suggestion, raison="test"),
+        ]
+        result = apply_corrections(sample_subtitles, corrections, max_chars=32)
+        for line in result[0].content.splitlines():
+            assert len(line) <= 32, f"Line too long at max_chars=32: {line!r}"

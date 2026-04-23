@@ -6,6 +6,7 @@ from pathlib import Path
 
 import srt
 
+from ..generate.subtitle import MAX_CHARS, wrap_text
 from .models import Correction, SRTParseError
 
 # Encodings tried in order (utf-8-sig handles the Windows BOM)
@@ -67,8 +68,13 @@ def write_srt(subtitles: list[srt.Subtitle], path: Path) -> None:
 def apply_corrections(
     subtitles: list[srt.Subtitle],
     corrections: list[Correction],
+    max_chars: int = MAX_CHARS,
 ) -> list[srt.Subtitle]:
     """Apply corrections to the subtitle list.
+
+    Claude returns its suggestion as a single flat string — we re-wrap it
+    through :func:`wrap_text` so the corrected segment respects the YouTube
+    line-width convention (``max_chars`` per line, 2 lines max).
 
     Does not mutate the originals — returns a new list.
     """
@@ -81,7 +87,7 @@ def apply_corrections(
                 index=sub.index,
                 start=sub.start,
                 end=sub.end,
-                content=patch[sub.index],
+                content=wrap_text(patch[sub.index], max_chars=max_chars),
                 proprietary=sub.proprietary,
             )
             result.append(corrected)
