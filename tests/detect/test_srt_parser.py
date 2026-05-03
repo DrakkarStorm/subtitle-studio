@@ -95,12 +95,17 @@ class TestApplyCorrections:
 
     def test_long_suggestion_is_wrapped(self, sample_subtitles: list[srt.Subtitle]) -> None:
         """Claude returns a single-line suggestion. apply_corrections must re-wrap
-        it so the corrected segment respects the 42-char / 2-line YouTube convention.
+        it so the corrected segment respects the MAX_CHARS / 2-line convention.
 
-        Regression: merged landscape segments (~80 chars) corrected by Claude
-        previously landed as one 85-char line in the corrected SRT.
+        Regression: merged landscape segments corrected by Claude previously
+        landed as one over-width line in the corrected SRT.
         """
-        long_suggestion = "la documentation officielle de Google et Coursera pour les questions"
+        from subtitle_studio.generate.subtitle import MAX_CHARS
+
+        long_suggestion = (
+            "la documentation officielle de Google et Coursera pour répondre "
+            "aux questions techniques que je me posais à ce moment-là."
+        )
         corrections = [
             Correction(
                 segment=1,
@@ -111,7 +116,7 @@ class TestApplyCorrections:
         ]
         result = apply_corrections(sample_subtitles, corrections)
         for line in result[0].content.splitlines():
-            assert len(line) <= 42, f"Line too long: {line!r}"
+            assert len(line) <= MAX_CHARS, f"Line too long: {line!r}"
         # Content still covers the original intent
         flat = result[0].content.replace("\n", " ")
         assert "Coursera" in flat

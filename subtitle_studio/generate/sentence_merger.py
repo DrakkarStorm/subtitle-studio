@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import datetime
+import logging
 
 import srt
 
-from .subtitle import MAX_CHARS, wrap_text
+from .subtitle import MAX_CHARS, wrap_text_with_overflow
+
+logger = logging.getLogger(__name__)
 
 # Default target duration for a merged segment. Matches the observed YouTube
 # average (~5 s) without enforcing a hard cap — the char budget does that.
@@ -37,24 +40,46 @@ def _joined_text(group: list[srt.Subtitle]) -> str:
     return " ".join(_flatten(sub.content) for sub in group)
 
 
-def _flush(group: list[srt.Subtitle], line_max_chars: int) -> srt.Subtitle:
+def _flush(group: list[srt.Subtitle], line_max_chars: int) -> tuple[srt.Subtitle, str]:
     """Collapse a group of consecutive subtitles into a single merged Subtitle.
 
-    ``line_max_chars`` is the per-line wrap width (typically ``MAX_CHARS`` = 42
+    ``line_max_chars`` is the per-line wrap width (typically ``MAX_CHARS``
     for landscape, ``SHORTS_MAX_CPL`` = 32 for Shorts). It is independent of the
     accumulator's character budget (``max_chars`` in ``merge_into_sentences``),
     which bounds the full merged text across both lines (typically 2 × per-line
     width).
+
+    Returns:
+        ``(subtitle, overflow)`` where ``overflow`` is any text that could not
+        fit in the 2-line wrap. The caller is expected to prepend ``overflow``
+        to the next iteration's input so no content is lost. ``overflow`` is
+        ``""`` when the group fit cleanly.
     """
     first = group[0]
     last = group[-1]
     merged_text = _joined_text(group)
-    return srt.Subtitle(
+    content, overflow = wrap_text_with_overflow(merged_text, max_chars=line_max_chars)
+    sub = srt.Subtitle(
         index=first.index,
         start=first.start,
         end=last.end,
-        content=wrap_text(merged_text, max_chars=line_max_chars),
+        content=content,
         proprietary=first.proprietary,
+    )
+    return sub, overflow
+
+
+def _prepend_overflow(sub: srt.Subtitle, overflow: str) -> srt.Subtitle:
+    """Return a new Subtitle with ``overflow`` prepended to its content."""
+    if not overflow:
+        return sub
+    new_content = (overflow + " " + sub.content).strip()
+    return srt.Subtitle(
+        index=sub.index,
+        start=sub.start,
+        end=sub.end,
+        content=new_content,
+        proprietary=sub.proprietary,
     )
 
 
@@ -104,15 +129,25 @@ def merge_into_sentences(
     result: list[srt.Subtitle] = []
     group: list[srt.Subtitle] = []
     target_delta = datetime.timedelta(seconds=target_duration_s)
+    pending_overflow = ""  # text that didn't fit in the previous flush — re-attached to the next sub
 
     for sub in subtitles:
+        # Re-attach any overflow from the previous flush to the start of this sub.
+        sub = _prepend_overflow(sub, pending_overflow)
+        pending_overflow = ""
+
         if not group:
             group.append(sub)
             continue
 
         candidate_text_len = len(_joined_text(group + [sub]))
         if candidate_text_len > max_chars:
-            result.append(_flush(group, line_max_chars))
+            flushed, pending_overflow = _flush(group, line_max_chars)
+            result.append(flushed)
+            # The overflow belongs to the *previous* group; carry it onto the
+            # current sub before opening the new group.
+            sub = _prepend_overflow(sub, pending_overflow)
+            pending_overflow = ""
             group = [sub]
             continue
 
@@ -120,10 +155,34 @@ def merge_into_sentences(
 
         current_duration = group[-1].end - group[0].start
         if current_duration >= target_delta and _ends_with_strong_punct(group[-1].content):
-            result.append(_flush(group, line_max_chars))
+            flushed, pending_overflow = _flush(group, line_max_chars)
+            result.append(flushed)
             group = []
 
     if group:
-        result.append(_flush(group, line_max_chars))
+        flushed, pending_overflow = _flush(group, line_max_chars)
+        result.append(flushed)
+
+    # End-of-video tail: nowhere to push the overflow. Try to re-fit it into
+    # the last segment (may produce a 3-line content, accepted as the lesser
+    # evil vs total content loss). Log a warning so the operator can review.
+    if pending_overflow and result:
+        last = result[-1]
+        existing = " ".join(last.content.split())  # flatten current 1-2 line content
+        combined = (existing + " " + pending_overflow).strip()
+        new_content, residual = wrap_text_with_overflow(combined, max_chars=line_max_chars)
+        if residual:
+            logger.warning(
+                "merge_into_sentences: end-of-video tail did not fit even after "
+                "re-attaching to the last segment. Lost: %r",
+                residual,
+            )
+        result[-1] = srt.Subtitle(
+            index=last.index,
+            start=last.start,
+            end=last.end,
+            content=new_content,
+            proprietary=last.proprietary,
+        )
 
     return result

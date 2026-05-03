@@ -12,6 +12,7 @@ from pathlib import Path
 import anthropic
 import srt
 
+from .detect.coherence import coherence_review
 from .detect.cps_autofix import auto_fix_cps_violations
 from .detect.detector import BATCH_SIZE, detect_errors, load_branding
 from .detect.detector import MODEL as DETECT_MODEL
@@ -31,7 +32,7 @@ from .detect.srt_parser import apply_corrections, parse_srt, write_srt
 from .generate.audio import extract_audio
 from .generate.sentence_merger import merge_into_sentences
 from .generate.subtitle import MAX_CHARS, to_subtitles
-from .generate.transcribe import transcribe
+from .generate.transcribe import drop_whisper_hallucinations, transcribe
 from .models import PipelineConfigError, PipelineStepError
 from .translate.translate import SUPPORTED_LANGS as TRANSLATE_SUPPORTED_LANGS
 from .translate.translate import run_translation
@@ -116,7 +117,10 @@ def run_pipeline(
         if _val <= 0:
             raise PipelineConfigError(f"--{_name} must be > 0 (got: {_val})")
 
-    out.mkdir(parents=True, exist_ok=True)
+    # The output directory is created lazily by `_step_generate` right before
+    # the first artefact is written. This avoids leaving empty `<stem>_<ts>_N`
+    # folders behind when the pipeline aborts early (config error, missing
+    # ffmpeg, transcription failure).
 
     client = anthropic.Anthropic(max_retries=3)
     resolved_branding_path = branding_path or _default_branding_path()
@@ -130,7 +134,14 @@ def run_pipeline(
 
     # Stage 1 — Extraction
     with _ctx("Extraction"):
-        srt_path = _step_generate(video_path, out, backend, max_chars=max_chars, shorts=shorts)
+        srt_path = _step_generate(
+            video_path,
+            out,
+            backend,
+            max_chars=max_chars,
+            shorts=shorts,
+            branding=branding,
+        )
 
     # Free the Whisper model (~3 GB) before the API calls
     gc.collect()
@@ -175,11 +186,31 @@ def _step_generate(
     backend: str,
     max_chars: int = MAX_CHARS,
     shorts: bool = False,
+    branding: BrandingConfig | None = None,
 ) -> Path:
     audio_path: Path | None = None
     try:
         audio_path = extract_audio(video_path)
-        result = transcribe(audio_path, backend=backend)
+        initial_prompt = _build_whisper_prompt(branding) if branding is not None else None
+        result = transcribe(audio_path, backend=backend, initial_prompt=initial_prompt)
+
+        # Lazy mkdir — only create the output dir once we have something to put
+        # in it. See note in run_pipeline for why this happens here.
+        out.mkdir(parents=True, exist_ok=True)
+
+        # 1. Save the raw Whisper output (before any filtering or merging) for
+        #    debug/inspection. Lets the operator compare what the ASR actually
+        #    produced vs what landed in the final SRT.
+        raw_subtitles = to_subtitles(result, max_chars)
+        if raw_subtitles:
+            write_srt(raw_subtitles, out / (video_path.stem + "_whisper_raw.srt"))
+
+        # 2. Drop Whisper hallucinations (zero-duration repeats and
+        #    short-duration verbatim repeats — see drop_whisper_hallucinations
+        #    docstring for the heuristic).
+        result.segments = drop_whisper_hallucinations(list(result.segments))
+
+        # 3. Convert the cleaned result to a wrapped subtitle list.
         subtitles = to_subtitles(result, max_chars)
         if not subtitles:
             raise PipelineStepError("Extraction", "No subtitles detected — silent video?")
@@ -233,6 +264,16 @@ def _step_detect(
             model=model,
         )
         working_subs = apply_corrections(subtitles, corrections, max_chars=max_chars) if corrections else subtitles
+
+        # 2. Global coherence pass — single Claude call over the full SRT to
+        # catch defects that span across detection batches (truncated phrases
+        # between segment 50/51, inter-segment repetitions, etc.). Anthropic
+        # API errors propagate as ClaudeAPIError (handled by the outer except);
+        # only malformed responses degrade silently to an empty list.
+        coherence_corrections = coherence_review(working_subs, context, branding, client, model)
+        if coherence_corrections:
+            working_subs = apply_corrections(working_subs, coherence_corrections, max_chars=max_chars)
+            corrections = corrections + coherence_corrections
 
         # Auto-fixes (duration merge + CPS split) only apply in Shorts mode.
         # Landscape mode keeps the sentence-merged segmentation as-is.
@@ -336,6 +377,32 @@ def _make_output_dir(video_path: Path) -> Path:
             i += 1
         candidate = c
     return candidate
+
+
+# Whisper's `initial_prompt` window is ~224 tokens; we keep the budget well
+# below that to leave room for the previous-context window during inference.
+_WHISPER_PROMPT_MAX_CHARS = 600
+
+
+def _build_whisper_prompt(branding: BrandingConfig) -> str | None:
+    """Build a vocabulary biasing prompt for Whisper from the branding config.
+
+    Whisper interprets the prompt as if it were the previous transcription
+    window, so a comma-separated list of expected terms biases the decoder
+    toward the right spelling for proper nouns and acronyms (e.g. "Taverne
+    Tech" vs "Tavtech", "CKA" vs "CK", "TJM").
+
+    Truncated to roughly 600 characters to stay safely under the 224-token
+    cap while preserving the most distinctive terms (proper nouns first).
+    Returns None if there is nothing to bias on.
+    """
+    terms = list(branding.noms_propres) + list(branding.vocabulaire_technique)
+    if not terms:
+        return None
+    prompt = "Vocabulaire : " + ", ".join(terms) + "."
+    if len(prompt) > _WHISPER_PROMPT_MAX_CHARS:
+        prompt = prompt[: _WHISPER_PROMPT_MAX_CHARS - 1].rsplit(",", 1)[0] + "."
+    return prompt
 
 
 def _default_branding_path() -> Path:
