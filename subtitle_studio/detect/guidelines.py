@@ -15,10 +15,13 @@ DEFAULT_MAX_CPS: float = 21.0
 DEFAULT_WARN_CPS: float = 18.0
 # warning — intermediate French threshold
 
-DEFAULT_MAX_CPL: int = 42
-# error   — BBC + Netflix hard limit (all languages)
-DEFAULT_WARN_CPL: int = 40
-# warning — EBU recommendation
+DEFAULT_MAX_CPL: int = 50
+# error   — aligned with the wrap width MAX_CHARS=50 (extended French convention).
+# BBC/Netflix hard limit is 42 for English; we raise to 50 because French
+# averages ~1.4× the word length of English and 42 caused frequent
+# 3-line wrap overflow with silent truncation.
+DEFAULT_WARN_CPL: int = 47
+# warning — EBU-style soft threshold ≈ 0.95 × MAX_CPL
 
 SHORTS_MAX_CPL: int = 32
 # error   — ceiling for YouTube Shorts (9:16 vertical)

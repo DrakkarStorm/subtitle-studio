@@ -251,7 +251,7 @@ class TestRunPipeline:
         assert mock_trans.call_args.kwargs["max_chars"] == 32
 
     def test_shorts_false_uses_default_max_chars(self, fake_video: Path, sample_srt_path: Path, tmp_path: Path) -> None:
-        """shorts=False (default) must pass max_chars=42 (MAX_CHARS) to the stages."""
+        """shorts=False (default) must pass MAX_CHARS to the stages."""
         from subtitle_studio.generate.subtitle import MAX_CHARS
 
         out_dir = tmp_path / "output"
@@ -475,6 +475,7 @@ class TestStepDetect:
 
         with (
             patch("subtitle_studio.pipeline.detect_errors", return_value=[]),
+            patch("subtitle_studio.pipeline.coherence_review", return_value=[]),
             patch(
                 "subtitle_studio.pipeline.auto_fix_cps_violations",
                 return_value=([], []),
@@ -509,6 +510,7 @@ class TestStepDetect:
 
         with (
             patch("subtitle_studio.pipeline.detect_errors", return_value=[]),
+            patch("subtitle_studio.pipeline.coherence_review", return_value=[]),
             patch(
                 "subtitle_studio.pipeline.auto_fix_cps_violations",
                 return_value=(list(srt.parse(sample_srt_path.read_text())), [cps_fix]),
@@ -552,6 +554,7 @@ class TestStepDetect:
 
         with (
             patch("subtitle_studio.pipeline.detect_errors", return_value=[]),
+            patch("subtitle_studio.pipeline.coherence_review", return_value=[]),
             patch(
                 "subtitle_studio.pipeline.auto_fix_cps_violations",
                 return_value=(split_subs, [cps_fix]),
@@ -587,6 +590,7 @@ class TestStepDetect:
 
         with (
             patch("subtitle_studio.pipeline.detect_errors", return_value=[]),
+            patch("subtitle_studio.pipeline.coherence_review", return_value=[]),
             patch(
                 "subtitle_studio.pipeline.auto_fix_cps_violations",
                 return_value=(original_subs, [cps_fix]),
@@ -623,6 +627,7 @@ class TestStepDetectDurationMerge:
 
         with (
             patch("subtitle_studio.pipeline.detect_errors", return_value=[]),
+            patch("subtitle_studio.pipeline.coherence_review", return_value=[]),
             patch(
                 "subtitle_studio.pipeline.auto_merge_short_segments",
                 return_value=([], []),
@@ -661,6 +666,7 @@ class TestStepDetectDurationMerge:
 
         with (
             patch("subtitle_studio.pipeline.detect_errors", return_value=[]),
+            patch("subtitle_studio.pipeline.coherence_review", return_value=[]),
             patch(
                 "subtitle_studio.pipeline.auto_merge_short_segments",
                 return_value=(original_subs, [duration_fix]),
@@ -699,6 +705,7 @@ class TestStepDetectDurationMerge:
 
         with (
             patch("subtitle_studio.pipeline.detect_errors", return_value=[]),
+            patch("subtitle_studio.pipeline.coherence_review", return_value=[]),
             patch(
                 "subtitle_studio.pipeline.auto_merge_short_segments",
                 return_value=(original_subs, []),
@@ -738,6 +745,7 @@ class TestStepDetectDurationMerge:
 
         with (
             patch("subtitle_studio.pipeline.detect_errors", return_value=[]),
+            patch("subtitle_studio.pipeline.coherence_review", return_value=[]),
             patch(
                 "subtitle_studio.pipeline.auto_merge_short_segments",
                 return_value=(original_subs, [duration_fix]),
@@ -780,6 +788,7 @@ class TestStepDetectLandscape:
 
         with (
             patch("subtitle_studio.pipeline.detect_errors", return_value=[]),
+            patch("subtitle_studio.pipeline.coherence_review", return_value=[]),
             patch("subtitle_studio.pipeline.auto_fix_cps_violations") as mock_autofix,
             patch("subtitle_studio.pipeline.auto_merge_short_segments") as mock_merge,
             patch("subtitle_studio.pipeline.audit_guidelines") as mock_audit,
@@ -815,6 +824,7 @@ class TestStepDetectLandscape:
 
         with (
             patch("subtitle_studio.pipeline.detect_errors", return_value=[correction]),
+            patch("subtitle_studio.pipeline.coherence_review", return_value=[]),
         ):
             result = _step_detect(
                 sample_srt_path,
@@ -940,6 +950,7 @@ class TestStepDetectLandscape:
 
         with (
             patch("subtitle_studio.pipeline.detect_errors", return_value=[]),
+            patch("subtitle_studio.pipeline.coherence_review", return_value=[]),
             patch("subtitle_studio.pipeline.auto_fix_cps_violations") as mock_autofix,
             patch("subtitle_studio.pipeline.auto_merge_short_segments") as mock_merge,
             patch("subtitle_studio.pipeline.audit_guidelines", return_value=[violation]),

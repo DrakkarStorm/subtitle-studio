@@ -4,7 +4,7 @@ from types import SimpleNamespace
 
 import srt as srt_lib
 
-from subtitle_studio.generate.subtitle import _vtt_time, to_srt, to_subtitles, to_vtt, wrap_text
+from subtitle_studio.generate.subtitle import MAX_CHARS, _vtt_time, to_srt, to_subtitles, to_vtt, wrap_text
 
 # ---------------------------------------------------------------------------
 # wrap_text
@@ -15,11 +15,11 @@ class TestWrapText:
     def test_short_text_unchanged(self) -> None:
         assert wrap_text("Bonjour le monde.") == "Bonjour le monde."
 
-    def test_long_line_wraps_at_42_chars(self) -> None:
-        text = "Voici une phrase vraiment très longue qui dépasse la limite de quarante-deux caractères."
+    def test_long_line_wraps_at_max_chars(self) -> None:
+        text = "Voici une phrase vraiment très longue qui dépasse la limite de cinquante caractères normalement."
         result = wrap_text(text)
         for line in result.splitlines():
-            assert len(line) <= 42, f"Line too long: {line!r}"
+            assert len(line) <= MAX_CHARS, f"Line too long: {line!r}"
 
     def test_max_two_lines(self) -> None:
         text = "Un deux trois quatre cinq six sept huit neuf dix onze douze treize quatorze quinze seize."
@@ -32,8 +32,8 @@ class TestWrapText:
     def test_empty_string(self) -> None:
         assert wrap_text("") == ""
 
-    def test_exactly_42_chars_stays_one_line(self) -> None:
-        text = "a" * 42
+    def test_exactly_max_chars_stays_one_line(self) -> None:
+        text = "a" * MAX_CHARS
         assert wrap_text(text) == text
 
     def test_max_chars_32_wraps_at_32(self) -> None:
@@ -43,8 +43,8 @@ class TestWrapText:
             assert len(line) <= 32, f"Line too long: {line!r}"
 
     def test_max_chars_32_default_unchanged(self) -> None:
-        text = "a" * 42
-        assert wrap_text(text) == text  # default still 42
+        text = "a" * MAX_CHARS
+        assert wrap_text(text) == text  # default unchanged
 
     def test_exactly_32_chars_stays_one_line(self) -> None:
         text = "a" * 32
@@ -114,13 +114,16 @@ class TestToSrt:
         assert "00:00:00,000 --> 00:00:02,500" in srt_text
 
     def test_line_wrapping_applied(self) -> None:
-        long_text = "Voici une phrase vraiment très longue qui dépasse la limite autorisée."
+        long_text = (
+            "Voici une phrase vraiment très longue qui dépasse largement la limite "
+            "autorisée par défaut sans aucun doute possible."
+        )
         result = _make_result((0.0, 5.0, long_text))
         srt_text = to_srt(result)
         lines = srt_text.strip().splitlines()
         content_lines = lines[2:]
         for line in content_lines:
-            assert len(line) <= 42
+            assert len(line) <= MAX_CHARS
 
     def test_empty_segments(self) -> None:
         result = _make_result()
@@ -135,11 +138,11 @@ class TestToSrt:
         for line in content_lines:
             assert len(line) <= 32, f"Line too long: {line!r}"
 
-    def test_default_max_chars_still_42(self) -> None:
-        text_35 = "a" * 35  # fits in 42, not in 32
-        result = _make_result((0.0, 2.0, text_35))
+    def test_default_max_chars_keeps_short_text_intact(self) -> None:
+        text = "a" * 35  # fits in default MAX_CHARS, not in 32
+        result = _make_result((0.0, 2.0, text))
         srt_text = to_srt(result)  # default
-        assert text_35 in srt_text  # not wrapped
+        assert text in srt_text  # not wrapped
 
 
 # ---------------------------------------------------------------------------
@@ -201,7 +204,10 @@ class TestToVtt:
         assert "\n3\n" in vtt_text
 
     def test_line_wrapping_applied(self) -> None:
-        long_text = "Voici une phrase vraiment très longue qui dépasse la limite autorisée."
+        long_text = (
+            "Voici une phrase vraiment très longue qui dépasse largement la limite "
+            "autorisée par défaut sans aucun doute possible."
+        )
         result = _make_result((0.0, 5.0, long_text))
         vtt_text = to_vtt(result)
         lines = vtt_text.splitlines()
@@ -211,4 +217,4 @@ class TestToVtt:
             if line and not line.startswith("WEBVTT") and "-->" not in line and not line.isdigit()
         ]
         for line in content_lines:
-            assert len(line) <= 42
+            assert len(line) <= MAX_CHARS

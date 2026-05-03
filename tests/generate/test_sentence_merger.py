@@ -158,16 +158,19 @@ class TestEdgeCases:
 
 class TestBoundaries:
     def test_cumulative_length_exactly_max_chars_flushes_before_overflow(self) -> None:
-        """A candidate addition that would overflow max_chars triggers a flush."""
-        # Each segment is 30 chars: 30 + 30 = 60 fits; adding a 3rd (90 total, below 84 would
-        # overflow actually at 30+30+30=90 > 84). Pick sizes that make the boundary clear.
+        """A candidate addition that would overflow max_chars triggers a flush.
+
+        Sizes are chosen relative to DEFAULT_MAX_CHARS (= MAX_CHARS × 2 = 100):
+        50 + 1 (space) + 49 = 100 chars fits at the boundary; adding any
+        non-empty third sub pushes past 100 → flush before adding.
+        """
         subs = [
-            _sub(1, 0.0, 1.0, "a" * 40),
-            _sub(2, 1.0, 2.0, "b" * 40),  # 40 + 1 (space) + 40 = 81, still ≤ 84
-            _sub(3, 2.0, 3.0, "c" * 10),  # would push to 92 > 84 → flush before adding
+            _sub(1, 0.0, 1.0, "a" * 50),
+            _sub(2, 1.0, 2.0, "b" * 49),  # 50 + 1 + 49 = 100, ≤ 100
+            _sub(3, 2.0, 3.0, "c" * 10),  # would push to 111 > 100 → flush before adding
         ]
         result = merge_into_sentences(subs)
-        # First two merge (81 chars), third opens a new group.
+        # First two merge (100 chars), third opens a new group.
         assert len(result) == 2
         assert result[1].index == 3
 
@@ -196,7 +199,7 @@ class TestBoundaries:
     def test_defaults_match_published_constants(self) -> None:
         """Sanity: defaults aren't silently changed."""
         assert DEFAULT_TARGET_DURATION_S == 5.0
-        assert DEFAULT_MAX_CHARS == MAX_CHARS * 2 == 84
+        assert DEFAULT_MAX_CHARS == MAX_CHARS * 2 == 100
 
     def test_line_max_chars_controls_wrap_width(self) -> None:
         """Custom line_max_chars is honoured by the internal wrap_text call.
@@ -215,13 +218,13 @@ class TestBoundaries:
             assert len(line) <= 20, f"Line too long with line_max_chars=20: {line!r}"
 
     def test_line_max_chars_default_is_max_chars(self) -> None:
-        """Omitting line_max_chars uses the YouTube 42-char default."""
-        # Text long enough to wrap at 42 but not at larger widths.
-        subs = [_sub(1, 0.0, 3.0, "word " * 15)]  # 75 chars
+        """Omitting line_max_chars uses the MAX_CHARS default."""
+        # Text long enough to wrap at MAX_CHARS but not at larger widths.
+        subs = [_sub(1, 0.0, 3.0, "word " * 18)]  # 90 chars
         result = merge_into_sentences(subs)
         assert len(result) == 1
         for line in result[0].content.splitlines():
-            assert len(line) <= MAX_CHARS  # 42
+            assert len(line) <= MAX_CHARS
 
 
 # ---------------------------------------------------------------------------
@@ -325,3 +328,79 @@ class TestRealisticCompression:
         # Total coverage is preserved.
         assert result[0].start == subs[0].start
         assert result[-1].end == subs[-1].end
+
+
+# ---------------------------------------------------------------------------
+# Overflow chaining (regression: words at the line-3 boundary must survive)
+# ---------------------------------------------------------------------------
+
+
+class TestOverflowChaining:
+    def test_overflow_word_appears_in_next_segment(self) -> None:
+        """When a group's wrapped text exceeds 2 lines, the leftover words
+        must be prepended to the next segment, never silently dropped."""
+        # 4 Whisper subs that sum to 98 chars — wraps to 3 lines at width 50.
+        # The trailing "qu'AWS." would be dropped by the old merger.
+        subs = [
+            _sub(1, 0.0, 1.0, "J'ai choisi GCP parce que j'aime bien"),
+            _sub(2, 1.0, 2.0, "ce que propose Google,"),
+            _sub(3, 2.0, 3.0, "et parce que c'est plus niche qu'AWS."),
+            _sub(4, 3.0, 5.0, "Donc ça veut dire moins de monde."),
+        ]
+        result = merge_into_sentences(subs)
+
+        # Total reconstructed text contains every word — no loss.
+        flat = " ".join(s.content.replace("\n", " ") for s in result)
+        assert "qu'AWS." in flat
+        assert "Donc ça veut dire" in flat
+
+        # The orphan word landed at the start of a later segment, not in the
+        # truncated first one.
+        first_flat = result[0].content.replace("\n", " ")
+        assert "qu'AWS." not in first_flat
+
+    def test_no_segment_exceeds_two_lines_with_overflow(self) -> None:
+        """Even when chaining overflow, no segment should display > MAX_LINES lines."""
+        subs = [
+            _sub(1, 0.0, 1.0, "pas l'inverse."),
+            _sub(2, 1.0, 4.0, "Simplement parce que j'apprends beaucoup mieux en pratiquant."),
+            _sub(3, 4.0, 5.5, "Donc, j'ouvrais un lab."),
+            _sub(4, 5.5, 7.0, "Et quand quelque chose."),
+        ]
+        result = merge_into_sentences(subs)
+        for s in result:
+            line_count = s.content.count("\n") + 1
+            assert line_count <= 2, f"Segment exceeds 2 lines: {s.content!r}"
+
+    def test_no_new_segments_added_by_overflow(self) -> None:
+        """The chaining must redistribute content within the same segment count
+        — pushing overflow forward, never spawning a new segment."""
+        # Same input as case #1 above; group budget would close after sub 3
+        # (98 chars > 100? actually 98 < 100, accepted as one group, then
+        # punctuation triggers flush). The next sub starts a new group naturally.
+        subs = [
+            _sub(1, 0.0, 1.0, "J'ai choisi GCP parce que j'aime bien"),
+            _sub(2, 1.0, 2.0, "ce que propose Google,"),
+            _sub(3, 2.0, 6.0, "et parce que c'est plus niche qu'AWS."),
+            _sub(4, 6.0, 8.0, "Donc ça veut dire moins de monde."),
+        ]
+        result = merge_into_sentences(subs)
+        # Pre-fix, the old behavior produced 2 segments with "qu'AWS." dropped.
+        # Post-fix, still 2 segments, but content is preserved via overflow.
+        assert len(result) == 2
+
+    def test_overflow_at_end_of_video_logs_residual(self, caplog) -> None:
+        """If overflow remains after the very last segment, log a warning
+        rather than silently lose content."""
+        import logging
+
+        # A single very long sub that wraps to 4 lines at width 50 — the
+        # second flush has nothing to push to, the tail must surface.
+        long_text = "word " * 50  # 250 chars → 5 lines @ width 50
+        subs = [_sub(1, 0.0, 5.0, long_text.strip())]
+        with caplog.at_level(logging.WARNING, logger="subtitle_studio.generate.sentence_merger"):
+            result = merge_into_sentences(subs)
+        # Single output segment, MAX_LINES respected for the saved content.
+        assert len(result) == 1
+        # The end-of-video residual triggers a warning.
+        assert any("end-of-video" in rec.message.lower() for rec in caplog.records)
