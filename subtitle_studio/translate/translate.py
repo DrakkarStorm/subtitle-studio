@@ -72,7 +72,12 @@ def translate_cues(
                 "- Translate naturally and fluently, not word-for-word\n"
                 "- Keep the same tone and energy as the original\n"
                 "- Return ONLY the translations, one per line, in the exact same [N] format\n"
-                "- Do not add any explanation, commentary, or extra text"
+                "- Do not add any explanation, commentary, or extra text\n"
+                "- LENGTH CONSTRAINT: every translated subtitle MUST fit in 100 characters\n"
+                "  total (2 lines × 50 chars). If a faithful translation would exceed this,\n"
+                "  rephrase more concisely while preserving meaning. Never produce a\n"
+                "  translation longer than 100 characters — silent truncation will lose\n"
+                "  the trailing words."
             ),
             messages=[
                 {

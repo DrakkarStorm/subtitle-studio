@@ -14,6 +14,7 @@ def transcribe_api(
     api_key: str | None = None,
     model: str = "whisper-large-v3",
     language: str = "fr",
+    initial_prompt: str | None = None,
 ) -> Any:
     """Transcribe audio via any OpenAI-compatible Whisper endpoint.
 
@@ -51,14 +52,17 @@ def transcribe_api(
 
     try:
         with audio_path.open("rb") as f:
-            result = client.audio.transcriptions.create(
-                model=model,
-                file=f,
-                language=language,
-                response_format="verbose_json",
-                timestamp_granularities=["segment"],
-                temperature=0.0,
-            )
+            kwargs: dict[str, Any] = {
+                "model": model,
+                "file": f,
+                "language": language,
+                "response_format": "verbose_json",
+                "timestamp_granularities": ["segment"],
+                "temperature": 0.0,
+            }
+            if initial_prompt:
+                kwargs["prompt"] = initial_prompt
+            result = client.audio.transcriptions.create(**kwargs)
     except APIConnectionError as e:
         raise RuntimeError(f"Could not reach API endpoint: {resolved_url}") from e
     except APIStatusError as e:
