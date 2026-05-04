@@ -45,14 +45,14 @@ dependencies = [
     "srt>=3.5",
     # detection
     "anthropic>=0.97.0",
-    "typer>=0.25.0",
+    "typer>=0.25.1",
     "pydantic>=2.13.3",
     "pyyaml>=6.0",
     "python-dotenv>=1.0.0",
 ]
 
 [project.optional-dependencies]
-api = ["openai>=2.32.0"]  # backend Whisper cloud
+api = ["openai>=2.33.0"]  # backend Whisper cloud
 
 [project.urls]
 Homepage = "https://taverne.tech"
