@@ -141,7 +141,6 @@ def coherence_review(
             system=system,
             messages=[
                 {"role": "user", "content": user_msg},
-                {"role": "assistant", "content": "["},  # prefill → force JSON array
             ],
         )
     except anthropic.AuthenticationError as exc:
@@ -159,10 +158,17 @@ def coherence_review(
     if not isinstance(block_text, str):
         logger.warning("Coherence pass: unexpected content block — skipped")
         return []
-    raw = "[" + block_text.strip()
+    raw = block_text.strip()
     raw = re.sub(r"```(?:json)?", "", raw).strip()
     if raw.endswith("```"):
         raw = raw[:-3].strip()
+
+    # Locate the JSON array — model may emit a short preamble on 4.6+ models
+    start = raw.find("[")
+    if start == -1:
+        logger.warning("Coherence pass: no JSON array found — skipped")
+        return []
+    raw = raw[start:]
 
     try:
         data = json.loads(raw)
