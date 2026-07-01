@@ -59,7 +59,8 @@ def translate_cues(
             (`stop_reason == "max_tokens"`).
     """
     lang_name = SUPPORTED_LANGS[target_lang]
-    numbered = "\n".join(f"[{i + 1}] {sub.content}" for i, sub in enumerate(subtitles))
+    # Normalize multi-line content to single line — wrap_text will re-wrap the translated result.
+    numbered = "\n".join(f"[{i + 1}] {sub.content.replace(chr(10), ' ')}" for i, sub in enumerate(subtitles))
 
     try:
         message = client.messages.create(
