@@ -65,7 +65,7 @@ def mock_anthropic_client() -> MagicMock:
 def make_claude_response(payload: list[dict[str, Any]]) -> MagicMock:
     """Build a fake Claude API response (messages.create format)."""
     content_block = MagicMock()
-    content_block.text = json.dumps(payload)[1:]  # strip the leading "[" (prefill)
+    content_block.text = json.dumps(payload)
     response = MagicMock()
     response.content = [content_block]
     return response

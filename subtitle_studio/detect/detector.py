@@ -177,7 +177,6 @@ def call_claude(
             system=system,
             messages=[
                 {"role": "user", "content": user_msg},
-                {"role": "assistant", "content": "["},  # prefill → force JSON array
             ],
         )
     except anthropic.AuthenticationError as exc:
@@ -192,12 +191,24 @@ def call_claude(
     if not isinstance(block_text, str):
         logger.warning("Unexpected content block type: %s — batch skipped", type(first_block).__name__)
         return []
-    raw = "[" + block_text.strip()
+    raw = block_text.strip()
 
     # Strip leftover markdown fences
     raw = re.sub(r"```(?:json)?", "", raw).strip()
     if raw.endswith("```"):
         raw = raw[:-3].strip()
+
+    # Locate the JSON array — the model may emit a short preamble on 4.6+ models
+    start = raw.find("[")
+    if start == -1:
+        logger.debug("Raw response for batch %d–%d:\n%s", batch[0].index, batch[-1].index, raw)
+        logger.warning(
+            "No JSON array found for batch %d–%d — batch skipped",
+            batch[0].index,
+            batch[-1].index,
+        )
+        return []
+    raw = raw[start:]
 
     try:
         data = json.loads(raw)
