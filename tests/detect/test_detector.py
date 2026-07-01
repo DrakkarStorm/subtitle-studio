@@ -110,7 +110,7 @@ class TestCallClaude:
 
     def test_markdown_fences_stripped(self, mock_anthropic_client: MagicMock, sample_subtitles: list) -> None:
         payload = [{"segment": 1, "original": "x", "suggestion": "y", "raison": "test"}]
-        raw_with_fence = "```json\n" + json.dumps(payload)[1:] + "\n```"
+        raw_with_fence = "```json\n" + json.dumps(payload) + "\n```"
         content_block = MagicMock()
         content_block.text = raw_with_fence
         mock_anthropic_client.messages.create.return_value = MagicMock(content=[content_block])
