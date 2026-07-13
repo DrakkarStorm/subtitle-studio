@@ -52,7 +52,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-api = ["openai>=2.44.0"]  # backend Whisper cloud
+api = ["openai>=2.45.0"]  # backend Whisper cloud
 
 [project.urls]
 Homepage = "https://taverne.tech"
@@ -68,7 +68,7 @@ packages = ["subtitle_studio"]
 [dependency-groups]
 dev = [
     "pytest>=9.1.1",
-    "ruff>=0.15.20",
+    "ruff>=0.15.21",
     "mypy>=1.20.2",
     "types-PyYAML>=6.0",
     "pre-commit>=4.6.0",
