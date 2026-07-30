@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import difflib
+
 import srt
 
 from .models import GuidelineViolation
@@ -45,6 +47,14 @@ DEFAULT_MAX_DURATION_ERROR_S: float = 10.0
 
 DEFAULT_MIN_GAP_MS: int = 80
 # warning — 2 frames at 25fps (French broadcast norm, BBC/EBU)
+
+DEFAULT_MIN_DUPLICATE_OVERLAP_CHARS: int = 20
+# warning — minimum length of a verbatim substring shared between two adjacent
+# segments to flag a probable duplicate take (a line re-recorded and left
+# uncut in the source footage — Whisper transcribes both occurrences
+# faithfully, so nothing upstream removes them). ~20 chars ≈ 3-4 French words,
+# short enough to catch a repeated clause, long enough to skip generic
+# connectors ("c'est", "de la") that recur naturally across unrelated segments.
 
 # Minimum duration required to evaluate CPS (avoids artifacts on extremely short segments)
 _MIN_DURATION_FOR_CPS_S: float = 0.2
@@ -222,6 +232,47 @@ def check_gaps(
     return violations
 
 
+def check_near_duplicate_boundary(
+    subtitles: list[srt.Subtitle],
+    min_overlap_chars: int = DEFAULT_MIN_DUPLICATE_OVERLAP_CHARS,
+) -> list[GuidelineViolation]:
+    """Flag adjacent segments sharing a long verbatim substring.
+
+    Catches a duplicate take left uncut in the source footage — the same
+    line spoken twice (rephrased or not) back-to-back. Whisper transcribes
+    both occurrences correctly, so no ASR-correction or hallucination filter
+    upstream removes them; this is a read-only signal for manual review, not
+    an auto-fix, since deciding which take to keep is an editorial call.
+
+    Skips pairs sharing the same ``index``: in Shorts mode,
+    ``auto_fix_cps_violations`` splits an overly dense segment into two
+    halves that both carry the original index until ``write_srt`` reindexes
+    them. Comparing those halves would report a segment as duplicating
+    itself whenever the split sentence contained a real repeated clause.
+    """
+    violations: list[GuidelineViolation] = []
+    sorted_subs = sorted(subtitles, key=lambda s: s.start)
+    for current, nxt in zip(sorted_subs, sorted_subs[1:], strict=False):
+        if current.index == nxt.index:
+            continue
+        a = " ".join(current.content.lower().split())
+        b = " ".join(nxt.content.lower().split())
+        match = difflib.SequenceMatcher(None, a, b).find_longest_match(0, len(a), 0, len(b))
+        if match.size >= min_overlap_chars:
+            shared = a[match.a : match.a + match.size]
+            violations.append(
+                GuidelineViolation(
+                    segment=nxt.index,
+                    rule="near_duplicate",
+                    severity="warning",
+                    description=(
+                        f"Shares {match.size} chars with segment {current.index} — possible duplicate take: {shared!r}"
+                    ),
+                )
+            )
+    return violations
+
+
 # ---------------------------------------------------------------------------
 # Orchestrator
 # ---------------------------------------------------------------------------
@@ -239,6 +290,7 @@ def check_guidelines(
     max_duration_s: float = DEFAULT_MAX_DURATION_S,
     max_duration_error_s: float = DEFAULT_MAX_DURATION_ERROR_S,
     min_gap_ms: int = DEFAULT_MIN_GAP_MS,
+    min_duplicate_overlap_chars: int = DEFAULT_MIN_DUPLICATE_OVERLAP_CHARS,
 ) -> list[GuidelineViolation]:
     """Run all YouTube compliance checks and return the aggregated violations."""
     violations: list[GuidelineViolation] = []
@@ -255,4 +307,5 @@ def check_guidelines(
         )
     )
     violations.extend(check_gaps(subtitles, min_gap_ms=min_gap_ms))
+    violations.extend(check_near_duplicate_boundary(subtitles, min_overlap_chars=min_duplicate_overlap_chars))
     return violations

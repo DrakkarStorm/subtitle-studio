@@ -44,7 +44,7 @@ class GuidelineViolation(BaseModel):
     """A YouTube guideline violation detected on an SRT segment."""
 
     segment: int = Field(ge=1, description="1-based segment number of the violation")
-    rule: str = Field(description="Rule identifier: cps, cpl, lines, duration_min, duration_max, gap")
+    rule: str = Field(description="Rule identifier: cps, cpl, lines, duration_min, duration_max, gap, near_duplicate")
     severity: Literal["warning", "error"] = Field(description="Severity level")
     description: str = Field(
         description="Message including the measured value and threshold (e.g. '22.3 chars/s — max 21')"
