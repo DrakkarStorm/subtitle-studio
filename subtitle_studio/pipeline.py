@@ -435,6 +435,7 @@ _RULE_LABELS: dict[str, str] = {
     "duration_min": "Minimum duration",
     "duration_max": "Maximum duration",
     "gap": "Gap between subtitles",
+    "near_duplicate": "Possible duplicate take",
 }
 
 
