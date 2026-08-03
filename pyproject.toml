@@ -44,15 +44,15 @@ dependencies = [
     "stable-ts>=2.19",
     "srt>=3.5",
     # detection
-    "anthropic>=0.116.0",
-    "typer>=0.26.8",
+    "anthropic>=0.120.2",
+    "typer>=0.27.0",
     "pydantic>=2.13.4",
     "pyyaml>=6.0",
     "python-dotenv>=1.0.0",
 ]
 
 [project.optional-dependencies]
-api = ["openai>=2.44.0"]  # backend Whisper cloud
+api = ["openai>=2.51.0"]  # backend Whisper cloud
 
 [project.urls]
 Homepage = "https://taverne.tech"
@@ -68,10 +68,10 @@ packages = ["subtitle_studio"]
 [dependency-groups]
 dev = [
     "pytest>=9.1.1",
-    "ruff>=0.15.20",
+    "ruff>=0.16.1",
     "mypy>=1.20.2",
     "types-PyYAML>=6.0",
-    "pre-commit>=4.6.0",
+    "pre-commit>=4.6.1",
 ]
 
 [tool.pytest.ini_options]
